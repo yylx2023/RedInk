@@ -168,18 +168,34 @@ class GoogleGenAIGenerator(ImageGeneratorBase):
 
         image_data = None
         logger.debug(f"  开始调用 API: model={model}")
-        for chunk in self.client.models.generate_content_stream(
-            model=model,
-            contents=contents,
-            config=generate_content_config,
-        ):
-            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                for part in chunk.candidates[0].content.parts:
-                    # 检查是否有图片数据
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        image_data = part.inline_data.data
-                        logger.debug(f"  收到图片数据: {len(image_data)} bytes")
-                        break
+
+        try:
+            chunk_count = 0
+            for chunk in self.client.models.generate_content_stream(
+                model=model,
+                contents=contents,
+                config=generate_content_config,
+            ):
+                chunk_count += 1
+                logger.debug(f"  收到 chunk #{chunk_count}")
+
+                if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                    for part in chunk.candidates[0].content.parts:
+                        # 检查是否有图片数据
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            image_data = part.inline_data.data
+                            logger.debug(f"  收到图片数据: {len(image_data)} bytes")
+                            break
+        except Exception as e:
+            logger.error(f"❌ API 调用异常: {e}", exc_info=True)
+            raise ValueError(
+                f"图片生成失败：API调用异常 - {str(e)}\n"
+                "可能原因：\n"
+                "1. 网络连接中断\n"
+                "2. API 服务不可用\n"
+                "3. 请求超时\n"
+                "建议：检查网络连接后重试"
+            )
 
         if not image_data:
             logger.error("API 返回为空，未生成图片")

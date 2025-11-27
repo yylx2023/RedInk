@@ -190,40 +190,32 @@ export async function retryFailedImages(
     let lastEventTime = Date.now()
     const READ_TIMEOUT = 180000 // 180秒无数据则超时（单张图片最多60秒 + 120秒缓冲）
 
+    console.log(`[SSE] 开始读取流，超时设置: ${READ_TIMEOUT / 1000}秒`)
+
     while (true) {
       // 检查距离上次收到数据是否超时
       const timeSinceLastEvent = Date.now() - lastEventTime
       if (timeSinceLastEvent > READ_TIMEOUT) {
         const error = new Error(`连接超时：${READ_TIMEOUT / 1000}秒内未收到任何数据`)
-        console.error('SSE 连接超时:', error)
+        console.error('[SSE] 连接超时:', error)
         throw error
       }
 
-      // 使用较短的超时进行单次读取，这样可以定期检查总超时
-      const SINGLE_READ_TIMEOUT = 10000 // 单次读取10秒超时
-      const timeoutPromise = new Promise<{ done: true; value?: undefined }>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('SINGLE_READ_TIMEOUT'))
-        }, SINGLE_READ_TIMEOUT)
-      })
-
-      const readPromise = reader.read()
-
+      // 直接读取，不使用 Promise.race（避免 Promise 泄漏）
       let result
       try {
-        result = await Promise.race([readPromise, timeoutPromise])
-      } catch (timeoutError: any) {
-        // 如果是单次读取超时，继续循环（会在上面检查总超时）
-        if (timeoutError.message === 'SINGLE_READ_TIMEOUT') {
-          continue
-        }
-        throw timeoutError
+        console.log(`[SSE] 等待数据... (距上次: ${timeSinceLastEvent / 1000}秒)`)
+        result = await reader.read()
+        console.log(`[SSE] 收到数据块: ${result.done ? 'EOF' : `${result.value?.length || 0} bytes`}`)
+      } catch (readError: any) {
+        console.error('[SSE] 读取错误:', readError)
+        throw readError
       }
 
       const { done, value } = result
 
       if (done) {
-        console.log('SSE 流正常结束')
+        console.log('[SSE] 流正常结束')
         break
       }
 
@@ -238,10 +230,15 @@ export async function retryFailedImages(
         if (!line.trim()) continue
 
         const [eventLine, dataLine] = line.split('\n')
-        if (!eventLine || !dataLine) continue
+        if (!eventLine || !dataLine) {
+          console.warn('[SSE] 格式错误的行:', line)
+          continue
+        }
 
         const eventType = eventLine.replace('event: ', '').trim()
         const eventData = dataLine.replace('data: ', '').trim()
+
+        console.log(`[SSE] 收到事件: ${eventType}`, eventData.substring(0, 100))
 
         try {
           const data = JSON.parse(eventData)
@@ -251,22 +248,27 @@ export async function retryFailedImages(
               onProgress({ index: -1, status: 'generating', message: data.message })
               break
             case 'complete':
+              console.log(`[SSE] 图片完成: index=${data.index}`)
               onComplete(data)
               break
             case 'error':
+              console.error(`[SSE] 图片错误: index=${data.index}`, data.message)
               onError(data)
               break
             case 'retry_finish':
+              console.log('[SSE] 重试完成:', data)
               onFinish(data)
               break
+            default:
+              console.warn(`[SSE] 未知事件类型: ${eventType}`)
           }
         } catch (e) {
-          console.error('解析 SSE 数据失败:', e, '原始数据:', eventData)
+          console.error('[SSE] 解析数据失败:', e, '原始数据:', eventData)
         }
       }
     }
   } catch (error: any) {
-    console.error('SSE 流错误:', error)
+    console.error('[SSE] 流错误:', error)
     const errorMessage = error.message || '未知错误'
     const enhancedError = new Error(
       `重试失败: ${errorMessage}\n` +
@@ -454,40 +456,32 @@ export async function generateImagesPost(
     let lastEventTime = Date.now()
     const READ_TIMEOUT = 180000 // 180秒无数据则超时（单张图片最多60秒 + 120秒缓冲）
 
+    console.log(`[SSE] 开始读取流，超时设置: ${READ_TIMEOUT / 1000}秒`)
+
     while (true) {
       // 检查距离上次收到数据是否超时
       const timeSinceLastEvent = Date.now() - lastEventTime
       if (timeSinceLastEvent > READ_TIMEOUT) {
         const error = new Error(`连接超时：${READ_TIMEOUT / 1000}秒内未收到任何数据`)
-        console.error('SSE 连接超时:', error)
+        console.error('[SSE] 连接超时:', error)
         throw error
       }
 
-      // 使用较短的超时进行单次读取，这样可以定期检查总超时
-      const SINGLE_READ_TIMEOUT = 10000 // 单次读取10秒超时
-      const timeoutPromise = new Promise<{ done: true; value?: undefined }>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('SINGLE_READ_TIMEOUT'))
-        }, SINGLE_READ_TIMEOUT)
-      })
-
-      const readPromise = reader.read()
-
+      // 直接读取，不使用 Promise.race（避免 Promise 泄漏）
       let result
       try {
-        result = await Promise.race([readPromise, timeoutPromise])
-      } catch (timeoutError: any) {
-        // 如果是单次读取超时，继续循环（会在上面检查总超时）
-        if (timeoutError.message === 'SINGLE_READ_TIMEOUT') {
-          continue
-        }
-        throw timeoutError
+        console.log(`[SSE] 等待数据... (距上次: ${timeSinceLastEvent / 1000}秒)`)
+        result = await reader.read()
+        console.log(`[SSE] 收到数据块: ${result.done ? 'EOF' : `${result.value?.length || 0} bytes`}`)
+      } catch (readError: any) {
+        console.error('[SSE] 读取错误:', readError)
+        throw readError
       }
 
       const { done, value } = result
 
       if (done) {
-        console.log('SSE 流正常结束')
+        console.log('[SSE] 流正常结束')
         break
       }
 
@@ -502,35 +496,46 @@ export async function generateImagesPost(
         if (!line.trim()) continue
 
         const [eventLine, dataLine] = line.split('\n')
-        if (!eventLine || !dataLine) continue
+        if (!eventLine || !dataLine) {
+          console.warn('[SSE] 格式错误的行:', line)
+          continue
+        }
 
         const eventType = eventLine.replace('event: ', '').trim()
         const eventData = dataLine.replace('data: ', '').trim()
+
+        console.log(`[SSE] 收到事件: ${eventType}`, eventData.substring(0, 100))
 
         try {
           const data = JSON.parse(eventData)
 
           switch (eventType) {
             case 'progress':
+              console.log(`[SSE] 进度更新: index=${data.index}, status=${data.status}`)
               onProgress(data)
               break
             case 'complete':
+              console.log(`[SSE] 图片完成: index=${data.index}`)
               onComplete(data)
               break
             case 'error':
+              console.error(`[SSE] 图片错误: index=${data.index}`, data.message)
               onError(data)
               break
             case 'finish':
+              console.log('[SSE] 全部完成:', data)
               onFinish(data)
               break
+            default:
+              console.warn(`[SSE] 未知事件类型: ${eventType}`)
           }
         } catch (e) {
-          console.error('解析 SSE 数据失败:', e, '原始数据:', eventData)
+          console.error('[SSE] 解析数据失败:', e, '原始数据:', eventData)
         }
       }
     }
   } catch (error: any) {
-    console.error('SSE 流错误:', error)
+    console.error('[SSE] 流错误:', error)
     const errorMessage = error.message || '未知错误'
     const enhancedError = new Error(
       `图片生成失败: ${errorMessage}\n` +

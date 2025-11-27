@@ -289,44 +289,64 @@ class ImageService:
                 }
             }
 
-            # 生成封面（使用用户上传的图片作为参考）
-            index, success, filename, error = self._generate_single_image(
-                cover_page, task_id, reference_image=None, full_outline=full_outline,
-                user_images=compressed_user_images, user_topic=user_topic
-            )
+            # 生成封面（使用用户上传的图片作为参考，添加异常保护）
+            try:
+                index, success, filename, error = self._generate_single_image(
+                    cover_page, task_id, reference_image=None, full_outline=full_outline,
+                    user_images=compressed_user_images, user_topic=user_topic
+                )
 
-            if success:
-                generated_images.append(filename)
-                self._task_states[task_id]["generated"][index] = filename
+                if success:
+                    generated_images.append(filename)
+                    self._task_states[task_id]["generated"][index] = filename
 
-                # 读取封面图片作为参考，并立即压缩到200KB以内
-                cover_path = os.path.join(self.current_task_dir, filename)
-                with open(cover_path, "rb") as f:
-                    cover_image_data = f.read()
+                    # 读取封面图片作为参考，并立即压缩到200KB以内
+                    cover_path = os.path.join(self.current_task_dir, filename)
+                    with open(cover_path, "rb") as f:
+                        cover_image_data = f.read()
 
-                # 压缩封面图（减少内存占用和后续传输开销）
-                cover_image_data = compress_image(cover_image_data, max_size_kb=200)
-                self._task_states[task_id]["cover_image"] = cover_image_data
+                    # 压缩封面图（减少内存占用和后续传输开销）
+                    cover_image_data = compress_image(cover_image_data, max_size_kb=200)
+                    self._task_states[task_id]["cover_image"] = cover_image_data
 
-                yield {
-                    "event": "complete",
-                    "data": {
-                        "index": index,
-                        "status": "done",
-                        "image_url": f"/api/images/{task_id}/{filename}",
-                        "phase": "cover"
+                    yield {
+                        "event": "complete",
+                        "data": {
+                            "index": index,
+                            "status": "done",
+                            "image_url": f"/api/images/{task_id}/{filename}",
+                            "phase": "cover"
+                        }
                     }
-                }
-            else:
+                else:
+                    failed_pages.append(cover_page)
+                    self._task_states[task_id]["failed"][index] = error
+
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "index": index,
+                            "status": "error",
+                            "message": error,
+                            "retryable": True,
+                            "phase": "cover"
+                        }
+                    }
+            except Exception as e:
+                # 捕获封面生成时的任何异常
+                index = cover_page["index"]
+                error_msg = f"生成封面时发生异常: {str(e)}"
+                logger.error(f"❌ 封面 [{index}] 生成异常: {e}", exc_info=True)
+
                 failed_pages.append(cover_page)
-                self._task_states[task_id]["failed"][index] = error
+                self._task_states[task_id]["failed"][index] = error_msg
 
                 yield {
                     "event": "error",
                     "data": {
                         "index": index,
                         "status": "error",
-                        "message": error,
+                        "message": error_msg,
                         "retryable": True,
                         "phase": "cover"
                     }
@@ -455,40 +475,60 @@ class ImageService:
                         }
                     }
 
-                    # 生成单张图片
-                    index, success, filename, error = self._generate_single_image(
-                        page,
-                        task_id,
-                        cover_image_data,
-                        0,
-                        full_outline,
-                        compressed_user_images,
-                        user_topic
-                    )
+                    # 生成单张图片（添加异常保护）
+                    try:
+                        index, success, filename, error = self._generate_single_image(
+                            page,
+                            task_id,
+                            cover_image_data,
+                            0,
+                            full_outline,
+                            compressed_user_images,
+                            user_topic
+                        )
 
-                    if success:
-                        generated_images.append(filename)
-                        self._task_states[task_id]["generated"][index] = filename
+                        if success:
+                            generated_images.append(filename)
+                            self._task_states[task_id]["generated"][index] = filename
 
-                        yield {
-                            "event": "complete",
-                            "data": {
-                                "index": index,
-                                "status": "done",
-                                "image_url": f"/api/images/{task_id}/{filename}",
-                                "phase": "content"
+                            yield {
+                                "event": "complete",
+                                "data": {
+                                    "index": index,
+                                    "status": "done",
+                                    "image_url": f"/api/images/{task_id}/{filename}",
+                                    "phase": "content"
+                                }
                             }
-                        }
-                    else:
+                        else:
+                            failed_pages.append(page)
+                            self._task_states[task_id]["failed"][index] = error
+
+                            yield {
+                                "event": "error",
+                                "data": {
+                                    "index": index,
+                                    "status": "error",
+                                    "message": error,
+                                    "retryable": True,
+                                    "phase": "content"
+                                }
+                            }
+                    except Exception as e:
+                        # 捕获任何未预期的异常，避免生成器崩溃
+                        index = page["index"]
+                        error_msg = f"生成图片时发生异常: {str(e)}"
+                        logger.error(f"❌ 图片 [{index}] 生成异常: {e}", exc_info=True)
+
                         failed_pages.append(page)
-                        self._task_states[task_id]["failed"][index] = error
+                        self._task_states[task_id]["failed"][index] = error_msg
 
                         yield {
                             "event": "error",
                             "data": {
                                 "index": index,
                                 "status": "error",
-                                "message": error,
+                                "message": error_msg,
                                 "retryable": True,
                                 "phase": "content"
                             }

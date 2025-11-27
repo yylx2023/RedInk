@@ -138,18 +138,33 @@ def generate_images():
         image_service = get_image_service()
 
         def generate():
-            """SSE 生成器"""
-            for event in image_service.generate_images(
-                pages, task_id, full_outline,
-                user_images=user_images if user_images else None,
-                user_topic=user_topic
-            ):
-                event_type = event["event"]
-                event_data = event["data"]
+            """SSE 生成器（带异常处理）"""
+            try:
+                for event in image_service.generate_images(
+                    pages, task_id, full_outline,
+                    user_images=user_images if user_images else None,
+                    user_topic=user_topic
+                ):
+                    event_type = event["event"]
+                    event_data = event["data"]
 
-                # 格式化为 SSE 格式
-                yield f"event: {event_type}\n"
-                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                    # 格式化为 SSE 格式
+                    yield f"event: {event_type}\n"
+                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                # 捕获生成过程中的异常，发送错误事件
+                logger.error(f"❌ SSE 流生成异常: {e}", exc_info=True)
+                error_event = {
+                    "event": "error",
+                    "data": {
+                        "index": -1,
+                        "status": "error",
+                        "message": f"服务器内部错误: {str(e)}",
+                        "retryable": False
+                    }
+                }
+                yield f"event: {error_event['event']}\n"
+                yield f"data: {json.dumps(error_event['data'], ensure_ascii=False)}\n\n"
 
         return Response(
             generate(),
@@ -157,6 +172,7 @@ def generate_images():
             headers={
                 'Cache-Control': 'no-cache',
                 'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
             }
         )
 
@@ -271,13 +287,28 @@ def retry_failed_images():
         image_service = get_image_service()
 
         def generate():
-            """SSE 生成器"""
-            for event in image_service.retry_failed_images(task_id, pages):
-                event_type = event["event"]
-                event_data = event["data"]
+            """SSE 生成器（带异常处理）"""
+            try:
+                for event in image_service.retry_failed_images(task_id, pages):
+                    event_type = event["event"]
+                    event_data = event["data"]
 
-                yield f"event: {event_type}\n"
-                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                    yield f"event: {event_type}\n"
+                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                # 捕获生成过程中的异常，发送错误事件
+                logger.error(f"❌ SSE 流生成异常: {e}", exc_info=True)
+                error_event = {
+                    "event": "error",
+                    "data": {
+                        "index": -1,
+                        "status": "error",
+                        "message": f"服务器内部错误: {str(e)}",
+                        "retryable": False
+                    }
+                }
+                yield f"event: {error_event['event']}\n"
+                yield f"data: {json.dumps(error_event['data'], ensure_ascii=False)}\n\n"
 
         return Response(
             generate(),
@@ -285,6 +316,7 @@ def retry_failed_images():
             headers={
                 'Cache-Control': 'no-cache',
                 'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
             }
         )
 

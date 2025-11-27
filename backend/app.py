@@ -150,9 +150,24 @@ def _validate_config_on_startup(logger):
 
 
 if __name__ == '__main__':
+    import socket
+    from werkzeug.serving import run_simple
+
     app = create_app()
-    app.run(
-        host=Config.HOST,
+
+    # 设置 socket 超时为 10 分钟（600 秒）
+    # 这样可以支持长时间的 SSE 连接
+    socket.setdefaulttimeout(600)
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"🌐 启动服务器: http://{Config.HOST}:{Config.PORT}")
+    logger.info(f"⏱️  Socket 超时设置: 600 秒（10 分钟）")
+
+    run_simple(
+        hostname=Config.HOST,
         port=Config.PORT,
-        debug=Config.DEBUG
+        application=app,
+        use_debugger=Config.DEBUG,
+        use_reloader=False,  # 禁用自动重载，避免 SSE 连接中断
+        threaded=True,  # 启用多线程，支持并发请求
     )

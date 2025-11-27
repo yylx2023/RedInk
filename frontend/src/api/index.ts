@@ -187,11 +187,48 @@ export async function retryFailedImages(
 
     const decoder = new TextDecoder()
     let buffer = ''
+    let lastEventTime = Date.now()
+    const READ_TIMEOUT = 180000 // 180秒无数据则超时（单张图片最多60秒 + 120秒缓冲）
 
     while (true) {
-      const { done, value } = await reader.read()
+      // 检查距离上次收到数据是否超时
+      const timeSinceLastEvent = Date.now() - lastEventTime
+      if (timeSinceLastEvent > READ_TIMEOUT) {
+        const error = new Error(`连接超时：${READ_TIMEOUT / 1000}秒内未收到任何数据`)
+        console.error('SSE 连接超时:', error)
+        throw error
+      }
 
-      if (done) break
+      // 使用较短的超时进行单次读取，这样可以定期检查总超时
+      const SINGLE_READ_TIMEOUT = 10000 // 单次读取10秒超时
+      const timeoutPromise = new Promise<{ done: true; value?: undefined }>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('SINGLE_READ_TIMEOUT'))
+        }, SINGLE_READ_TIMEOUT)
+      })
+
+      const readPromise = reader.read()
+
+      let result
+      try {
+        result = await Promise.race([readPromise, timeoutPromise])
+      } catch (timeoutError: any) {
+        // 如果是单次读取超时，继续循环（会在上面检查总超时）
+        if (timeoutError.message === 'SINGLE_READ_TIMEOUT') {
+          continue
+        }
+        throw timeoutError
+      }
+
+      const { done, value } = result
+
+      if (done) {
+        console.log('SSE 流正常结束')
+        break
+      }
+
+      // 更新最后接收时间
+      lastEventTime = Date.now()
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n\n')
@@ -224,12 +261,21 @@ export async function retryFailedImages(
               break
           }
         } catch (e) {
-          console.error('解析 SSE 数据失败:', e)
+          console.error('解析 SSE 数据失败:', e, '原始数据:', eventData)
         }
       }
     }
-  } catch (error) {
-    onStreamError(error as Error)
+  } catch (error: any) {
+    console.error('SSE 流错误:', error)
+    const errorMessage = error.message || '未知错误'
+    const enhancedError = new Error(
+      `重试失败: ${errorMessage}\n` +
+      `可能原因：\n` +
+      `1. 网络连接不稳定\n` +
+      `2. 后端处理超时（单张图片生成时间过长）\n` +
+      `建议：检查网络连接后重试`
+    )
+    onStreamError(enhancedError)
   }
 }
 
@@ -405,11 +451,48 @@ export async function generateImagesPost(
 
     const decoder = new TextDecoder()
     let buffer = ''
+    let lastEventTime = Date.now()
+    const READ_TIMEOUT = 180000 // 180秒无数据则超时（单张图片最多60秒 + 120秒缓冲）
 
     while (true) {
-      const { done, value } = await reader.read()
+      // 检查距离上次收到数据是否超时
+      const timeSinceLastEvent = Date.now() - lastEventTime
+      if (timeSinceLastEvent > READ_TIMEOUT) {
+        const error = new Error(`连接超时：${READ_TIMEOUT / 1000}秒内未收到任何数据`)
+        console.error('SSE 连接超时:', error)
+        throw error
+      }
 
-      if (done) break
+      // 使用较短的超时进行单次读取，这样可以定期检查总超时
+      const SINGLE_READ_TIMEOUT = 10000 // 单次读取10秒超时
+      const timeoutPromise = new Promise<{ done: true; value?: undefined }>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('SINGLE_READ_TIMEOUT'))
+        }, SINGLE_READ_TIMEOUT)
+      })
+
+      const readPromise = reader.read()
+
+      let result
+      try {
+        result = await Promise.race([readPromise, timeoutPromise])
+      } catch (timeoutError: any) {
+        // 如果是单次读取超时，继续循环（会在上面检查总超时）
+        if (timeoutError.message === 'SINGLE_READ_TIMEOUT') {
+          continue
+        }
+        throw timeoutError
+      }
+
+      const { done, value } = result
+
+      if (done) {
+        console.log('SSE 流正常结束')
+        break
+      }
+
+      // 更新最后接收时间
+      lastEventTime = Date.now()
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n\n')
@@ -442,12 +525,22 @@ export async function generateImagesPost(
               break
           }
         } catch (e) {
-          console.error('解析 SSE 数据失败:', e)
+          console.error('解析 SSE 数据失败:', e, '原始数据:', eventData)
         }
       }
     }
-  } catch (error) {
-    onStreamError(error as Error)
+  } catch (error: any) {
+    console.error('SSE 流错误:', error)
+    const errorMessage = error.message || '未知错误'
+    const enhancedError = new Error(
+      `图片生成失败: ${errorMessage}\n` +
+      `可能原因：\n` +
+      `1. 网络连接不稳定\n` +
+      `2. 后端处理超时（单张图片生成时间过长）\n` +
+      `3. API 服务异常\n` +
+      `建议：检查网络连接和后端日志后重试`
+    )
+    onStreamError(enhancedError)
   }
 }
 

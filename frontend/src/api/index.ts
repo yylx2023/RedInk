@@ -526,6 +526,10 @@ export async function generateImagesPost(
               console.log('[SSE] 全部完成:', data)
               onFinish(data)
               break
+            case 'heartbeat':
+              // 心跳事件：保持连接活跃，防止代理超时
+              console.log(`[SSE] 💓 心跳: index=${data.index}`)
+              break
             default:
               console.warn(`[SSE] 未知事件类型: ${eventType}`)
           }

@@ -6,12 +6,17 @@ import time
 import traceback
 import zipfile
 import io
+import threading
+import queue
 from flask import Blueprint, request, jsonify, Response, send_file
 from backend.services.outline import get_outline_service
 from backend.services.image import get_image_service
 from backend.services.history import get_history_service
 
 logger = logging.getLogger(__name__)
+
+# 心跳间隔（秒）- 用于保持 SSE 连接活跃，防止 Cloudflare/Nginx 代理超时
+HEARTBEAT_INTERVAL = 30
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -138,33 +143,89 @@ def generate_images():
         image_service = get_image_service()
 
         def generate():
-            """SSE 生成器（带异常处理）"""
-            try:
-                for event in image_service.generate_images(
-                    pages, task_id, full_outline,
-                    user_images=user_images if user_images else None,
-                    user_topic=user_topic
-                ):
-                    event_type = event["event"]
-                    event_data = event["data"]
+            """SSE 生成器（带心跳和异常处理）
 
-                    # 格式化为 SSE 格式
-                    yield f"event: {event_type}\n"
-                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            使用独立线程运行图片生成，主线程负责：
+            1. 转发生成事件
+            2. 每 30 秒发送心跳，防止代理超时断开连接
+            """
+            # 事件队列：用于在生成线程和主线程之间传递事件
+            event_queue = queue.Queue()
+            # 停止标志
+            stop_flag = threading.Event()
+
+            def producer():
+                """生产者线程：运行图片生成，将事件放入队列"""
+                try:
+                    for event in image_service.generate_images(
+                        pages, task_id, full_outline,
+                        user_images=user_images if user_images else None,
+                        user_topic=user_topic
+                    ):
+                        if stop_flag.is_set():
+                            break
+                        event_queue.put(("event", event))
+                    # 生成完成
+                    event_queue.put(("done", None))
+                except Exception as e:
+                    logger.error(f"❌ 图片生成线程异常: {e}", exc_info=True)
+                    event_queue.put(("error", str(e)))
+
+            # 启动生产者线程
+            producer_thread = threading.Thread(target=producer, daemon=True)
+            producer_thread.start()
+
+            try:
+                while True:
+                    try:
+                        # 每 HEARTBEAT_INTERVAL 秒检查一次队列
+                        msg_type, msg_data = event_queue.get(timeout=HEARTBEAT_INTERVAL)
+
+                        if msg_type == "event":
+                            # 正常事件，转发给客户端
+                            event_type = msg_data["event"]
+                            event_data = msg_data["data"]
+                            yield f"event: {event_type}\n"
+                            yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                        elif msg_type == "done":
+                            # 生成完成，退出循环
+                            break
+                        elif msg_type == "error":
+                            # 生成出错，发送错误事件
+                            error_event = {
+                                "index": -1,
+                                "status": "error",
+                                "message": f"服务器内部错误: {msg_data}",
+                                "retryable": False
+                            }
+                            yield f"event: error\n"
+                            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                            break
+
+                    except queue.Empty:
+                        # 队列超时，发送心跳保持连接
+                        logger.debug("💓 发送心跳事件...")
+                        heartbeat_data = {
+                            "status": "heartbeat",
+                            "message": "保持连接..."
+                        }
+                        yield f"event: heartbeat\n"
+                        yield f"data: {json.dumps(heartbeat_data, ensure_ascii=False)}\n\n"
+
+            except GeneratorExit:
+                # 客户端断开连接
+                logger.info("客户端断开连接，停止生成")
+                stop_flag.set()
             except Exception as e:
-                # 捕获生成过程中的异常，发送错误事件
                 logger.error(f"❌ SSE 流生成异常: {e}", exc_info=True)
                 error_event = {
-                    "event": "error",
-                    "data": {
-                        "index": -1,
-                        "status": "error",
-                        "message": f"服务器内部错误: {str(e)}",
-                        "retryable": False
-                    }
+                    "index": -1,
+                    "status": "error",
+                    "message": f"服务器内部错误: {str(e)}",
+                    "retryable": False
                 }
-                yield f"event: {error_event['event']}\n"
-                yield f"data: {json.dumps(error_event['data'], ensure_ascii=False)}\n\n"
+                yield f"event: error\n"
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
         return Response(
             generate(),

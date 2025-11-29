@@ -15,9 +15,17 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:12398',
         changeOrigin: true,
-        // SSE 长连接需要更长的超时时间
-        timeout: 600000,      // 10分钟
-        proxyTimeout: 600000  // 10分钟
+        // SSE 长连接配置
+        configure: (proxy) => {
+          // 设置代理超时为 10 分钟
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            // 设置 socket 超时
+            req.socket.setTimeout(600000)
+            if (res.socket) {
+              res.socket.setTimeout(600000)
+            }
+          })
+        }
       }
     }
   }

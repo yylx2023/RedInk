@@ -8,12 +8,28 @@ import zipfile
 import io
 import threading
 import queue
+import hashlib
+import secrets
+from pathlib import Path
 from flask import Blueprint, request, jsonify, Response, send_file
+from dotenv import load_dotenv
 from backend.services.outline import get_outline_service
 from backend.services.image import get_image_service
 from backend.services.history import get_history_service
 
 logger = logging.getLogger(__name__)
+
+# 加载 .env 文件
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+
+# 认证配置
+AUTH_USERNAME = os.getenv('AUTH_USERNAME', 'root')
+AUTH_PASSWORD = os.getenv('AUTH_PASSWORD', 'ai@2025toor')
+JWT_SECRET = os.getenv('JWT_SECRET', 'redink-secret-key-2025')
+
+# 简单的 token 存储（生产环境建议使用 Redis）
+valid_tokens = set()
 
 # 心跳间隔（秒）- 用于保持 SSE 连接活跃，防止 Cloudflare/Nginx 代理超时
 HEARTBEAT_INTERVAL = 30
@@ -40,6 +56,96 @@ def _log_error(endpoint: str, error: Exception):
     logger.error(f"  错误类型: {type(error).__name__}")
     logger.error(f"  错误信息: {str(error)}")
     logger.debug(f"  堆栈跟踪:\n{traceback.format_exc()}")
+
+
+def _generate_token():
+    """生成随机 token"""
+    return secrets.token_hex(32)
+
+
+def _verify_token(token: str) -> bool:
+    """验证 token 是否有效"""
+    return token in valid_tokens
+
+
+# ==================== 认证相关 API ====================
+
+@api_bp.route('/login', methods=['POST'])
+def login():
+    """用户登录"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '')
+        password = data.get('password', '')
+
+        _log_request('/login', {'username': username})
+
+        if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+            # 生成 token
+            token = _generate_token()
+            valid_tokens.add(token)
+            logger.info(f"✅ 用户 {username} 登录成功")
+            return jsonify({
+                "success": True,
+                "token": token,
+                "message": "登录成功"
+            }), 200
+        else:
+            logger.warning(f"❌ 用户 {username} 登录失败：用户名或密码错误")
+            return jsonify({
+                "success": False,
+                "error": "用户名或密码错误"
+            }), 401
+
+    except Exception as e:
+        _log_error('/login', e)
+        return jsonify({
+            "success": False,
+            "error": f"登录异常: {str(e)}"
+        }), 500
+
+
+@api_bp.route('/logout', methods=['POST'])
+def logout():
+    """用户登出"""
+    try:
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if token and token in valid_tokens:
+            valid_tokens.discard(token)
+            logger.info("✅ 用户登出成功")
+        return jsonify({
+            "success": True,
+            "message": "登出成功"
+        }), 200
+    except Exception as e:
+        _log_error('/logout', e)
+        return jsonify({
+            "success": False,
+            "error": f"登出异常: {str(e)}"
+        }), 500
+
+
+@api_bp.route('/verify', methods=['GET'])
+def verify_token():
+    """验证 token 是否有效"""
+    try:
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if _verify_token(token):
+            return jsonify({
+                "success": True,
+                "valid": True
+            }), 200
+        else:
+            return jsonify({
+                "success": True,
+                "valid": False
+            }), 200
+    except Exception as e:
+        _log_error('/verify', e)
+        return jsonify({
+            "success": False,
+            "error": f"验证异常: {str(e)}"
+        }), 500
 
 
 @api_bp.route('/outline', methods=['POST'])

@@ -1,12 +1,12 @@
 <template>
-  <div id="app">
-    <!-- 侧边栏 Sidebar -->
-    <aside class="layout-sidebar">
+  <div id="app" :class="{ 'no-sidebar': isLoginPage }">
+    <!-- 侧边栏 Sidebar（登录页不显示） -->
+    <aside v-if="!isLoginPage" class="layout-sidebar">
       <div class="logo-area">
         <img src="/logo.png" alt="红墨" class="logo-icon" />
         <span class="logo-text">红墨</span>
       </div>
-      
+
       <nav class="nav-menu">
         <RouterLink to="/" class="nav-item" active-class="active">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
@@ -21,25 +21,30 @@
           系统设置
         </RouterLink>
       </nav>
-      
+
       <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--border-color);">
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px; cursor: pointer;" @click="handleLogout">
           <img src="/logo.png" alt="默子" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;" />
-          <div>
+          <div style="flex: 1;">
             <div style="font-size: 14px; font-weight: 600;">默子</div>
-            <div style="font-size: 12px; color: var(--text-sub);">mozi</div>
+            <div style="font-size: 12px; color: var(--text-sub);">点击退出登录</div>
           </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.5;">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
         </div>
       </div>
     </aside>
 
     <!-- 主内容区 -->
-    <main class="layout-main">
+    <main class="layout-main" :class="{ 'full-width': isLoginPage }">
       <RouterView v-slot="{ Component, route }">
         <component :is="Component" />
 
-        <!-- 全局页脚版权信息（首页除外） -->
-        <footer v-if="route.path !== '/'" class="global-footer">
+        <!-- 全局页脚版权信息（首页和登录页除外） -->
+        <footer v-if="route.path !== '/' && route.path !== '/login'" class="global-footer">
           <div class="footer-content">
             <div class="footer-text">
               © 2025 <a href="https://github.com/HisMax/RedInk" target="_blank" rel="noopener noreferrer">RedInk</a> by 默子 (Histone)
@@ -55,9 +60,22 @@
 </template>
 
 <script setup lang="ts">
-import { RouterView, RouterLink } from 'vue-router'
-import { onMounted } from 'vue'
+import { RouterView, RouterLink, useRoute, useRouter } from 'vue-router'
+import { onMounted, computed } from 'vue'
 import { setupAutoSave } from './stores/generator'
+import { logout } from './api'
+
+const route = useRoute()
+const router = useRouter()
+
+// 判断是否是登录页
+const isLoginPage = computed(() => route.path === '/login')
+
+// 处理登出
+const handleLogout = async () => {
+  await logout()
+  router.push('/login')
+}
 
 // 启用自动保存到 localStorage
 onMounted(() => {

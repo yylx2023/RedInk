@@ -46,6 +46,16 @@ body {
   flex-direction: column;
 }
 
+/* 登录页面全宽布局 */
+#app.no-sidebar {
+  display: block;
+}
+
+.layout-main.full-width {
+  margin-left: 0;
+  padding: 0;
+}
+
 /* Logo 区域 */
 .logo-area {
   display: flex;

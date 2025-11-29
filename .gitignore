@@ -74,3 +74,4 @@ htmlcov/
 *.temp
 test_*.py
 debug_*.py
+.env

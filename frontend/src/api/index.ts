@@ -2,6 +2,74 @@ import axios from 'axios'
 
 const API_BASE_URL = '/api'
 
+// ==================== 认证相关 API ====================
+
+// 获取存储的 token
+export function getToken(): string | null {
+  return localStorage.getItem('auth_token')
+}
+
+// 保存 token
+export function setToken(token: string): void {
+  localStorage.setItem('auth_token', token)
+}
+
+// 清除 token
+export function clearToken(): void {
+  localStorage.removeItem('auth_token')
+}
+
+// 检查是否已登录
+export function isAuthenticated(): boolean {
+  return !!getToken()
+}
+
+// 登录
+export async function login(
+  username: string,
+  password: string
+): Promise<{ success: boolean; token?: string; error?: string }> {
+  const response = await axios.post(`${API_BASE_URL}/login`, {
+    username,
+    password
+  })
+  if (response.data.success && response.data.token) {
+    setToken(response.data.token)
+  }
+  return response.data
+}
+
+// 登出
+export async function logout(): Promise<{ success: boolean }> {
+  try {
+    const token = getToken()
+    await axios.post(`${API_BASE_URL}/logout`, {}, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    })
+  } catch (e) {
+    // 忽略登出错误
+  }
+  clearToken()
+  return { success: true }
+}
+
+// 验证 token
+export async function verifyToken(): Promise<boolean> {
+  const token = getToken()
+  if (!token) return false
+
+  try {
+    const response = await axios.get(`${API_BASE_URL}/verify`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    return response.data.valid === true
+  } catch (e) {
+    return false
+  }
+}
+
+// ==================== 业务接口 ====================
+
 export interface Page {
   index: number
   type: 'cover' | 'content' | 'summary'

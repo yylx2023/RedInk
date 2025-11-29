@@ -14,7 +14,10 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:12398',
-        changeOrigin: true
+        changeOrigin: true,
+        // SSE 长连接需要更长的超时时间
+        timeout: 600000,      // 10分钟
+        proxyTimeout: 600000  // 10分钟
       }
     }
   }

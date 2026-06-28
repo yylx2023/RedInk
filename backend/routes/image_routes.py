@@ -13,11 +13,16 @@ import os
 import json
 import base64
 import logging
+import queue
+import threading
 from flask import Blueprint, request, jsonify, Response, send_file
 from backend.services.image import get_image_service
 from .utils import log_request, log_error
 
 logger = logging.getLogger(__name__)
+
+# 心跳间隔（秒）- 用于保持 SSE 连接活跃，防止 Cloudflare/Nginx 代理超时
+HEARTBEAT_INTERVAL = 30
 
 
 def create_image_blueprint():
@@ -72,18 +77,74 @@ def create_image_blueprint():
             image_service = get_image_service()
 
             def generate():
-                """SSE 事件生成器"""
-                for event in image_service.generate_images(
-                    pages, task_id, full_outline,
-                    user_images=user_images if user_images else None,
-                    user_topic=user_topic
-                ):
-                    event_type = event["event"]
-                    event_data = event["data"]
+                """SSE 事件生成器（带心跳和异常处理）"""
+                event_queue = queue.Queue()
+                stop_flag = threading.Event()
 
-                    # 格式化为 SSE 格式
-                    yield f"event: {event_type}\n"
-                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                def producer():
+                    """生产者线程：运行图片生成，将事件放入队列"""
+                    try:
+                        for event in image_service.generate_images(
+                            pages, task_id, full_outline,
+                            user_images=user_images if user_images else None,
+                            user_topic=user_topic
+                        ):
+                            if stop_flag.is_set():
+                                break
+                            event_queue.put(("event", event))
+                        event_queue.put(("done", None))
+                    except Exception as e:
+                        logger.error(f"❌ 图片生成线程异常: {e}", exc_info=True)
+                        event_queue.put(("error", str(e)))
+
+                producer_thread = threading.Thread(target=producer, daemon=True)
+                producer_thread.start()
+
+                try:
+                    while True:
+                        try:
+                            msg_type, msg_data = event_queue.get(timeout=HEARTBEAT_INTERVAL)
+
+                            if msg_type == "event":
+                                event_type = msg_data["event"]
+                                event_data = msg_data["data"]
+                                yield f"event: {event_type}\n"
+                                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                            elif msg_type == "done":
+                                break
+                            elif msg_type == "error":
+                                error_event = {
+                                    "index": -1,
+                                    "status": "error",
+                                    "message": f"服务器内部错误: {msg_data}",
+                                    "retryable": False
+                                }
+                                yield "event: error\n"
+                                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                                break
+
+                        except queue.Empty:
+                            logger.debug("💓 发送心跳事件...")
+                            heartbeat_data = {
+                                "status": "heartbeat",
+                                "message": "保持连接..."
+                            }
+                            yield "event: heartbeat\n"
+                            yield f"data: {json.dumps(heartbeat_data, ensure_ascii=False)}\n\n"
+
+                except GeneratorExit:
+                    logger.info("客户端断开连接，停止生成")
+                    stop_flag.set()
+                except Exception as e:
+                    logger.error(f"❌ SSE 流生成异常: {e}", exc_info=True)
+                    error_event = {
+                        "index": -1,
+                        "status": "error",
+                        "message": f"服务器内部错误: {str(e)}",
+                        "retryable": False
+                    }
+                    yield "event: error\n"
+                    yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
             return Response(
                 generate(),
@@ -91,6 +152,7 @@ def create_image_blueprint():
                 headers={
                     'Cache-Control': 'no-cache',
                     'X-Accel-Buffering': 'no',
+                    'Connection': 'keep-alive',
                 }
             )
 
